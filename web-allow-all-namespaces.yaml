@@ -10,3 +10,11 @@ spec:
   ingress:
   - from:
     - namespaceSelector: {}
+
+
+
+Diese NetworkPolicy erlaubt den Verkehr von allen Pods in allen Namespaces zu einer bestimmten Anwendung.
+
+Anwendungsfall:
+
+    Sie haben einen gemeinsamen Dienst oder eine Datenbank, die von Bereitstellungen in verschiedenen Namespaces verwendet wird.
