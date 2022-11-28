@@ -1,0 +1,250 @@
+Kubernetes Basic Demo:
+
+kubectl apply -f mongo-secret.yaml
+kubectl apply -f mongo.yaml
+kubectl apply -f mongo-configmap.yaml 
+kubectl apply -f mongo-express.yaml
+
+kubectl get pod
+kubectl get pod --watch
+kubectl get pod -o wide
+kubectl get service
+kubectl get secret
+kubectl get all | grep mongodb
+
+kubectl describe pod mongodb-deployment-xxxxxx
+kubectl describe service mongodb-service
+kubectl logs mongo-express-xxxxxx
+
+minikube service mongo-express-service
+
+
+
+
+
+Step by Step: Kubernetes NetworkPolicy (Cicilium)
+
+
+#erstellt neuen namespace 
+kubectl create ns policy-demo
+
+#deployed nginx in namespace
+kubectl create deployment --namespace=policy-demo nginx --image=nginx
+
+#exposed port 80 für nginx deployment
+kubectl expose --namespace=policy-demo deployment nginx --port=80
+
+#run busybox shell
+kubectl run --namespace=policy-demo access --rm -ti --image busybox /bin/sh
+
+#test 
+wget -q nginx -O -
+
+kubectl create -f - <<EOF
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: default-deny
+  namespace: policy-demo
+spec:
+  podSelector:
+    matchLabels: {}
+EOF
+
+kubectl run --namespace=policy-demo access --rm -ti --image busybox /bin/sh
+
+wget -q --timeout=5 nginx -O -
+
+kubectl create -f - <<EOF
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: access-nginx
+  namespace: policy-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  ingress:
+    - from:
+      - podSelector:
+          matchLabels:
+            run: access
+EOF
+
+kubectl run --namespace=policy-demo access --rm -ti --image busybox /bin/sh
+
+wget -q --timeout=5 nginx -O -
+
+kubectl run --namespace=policy-demo cant-access --rm -ti --image busybox /bin/sh
+
+wget -q --timeout=5 nginx -O -
+
+kubectl delete ns policy-demo
+
+---- 
+
+
+
+Create the Namespace and Nginx Service
+Deny all ingress traffic
+Allow ingress traffic to Nginx
+Deny all egress traffic
+Allow egress traffic to kube-dns
+Cleanup Namespace
+
+
+1. Create the namespace and nginx service
+
+kubectl create ns advanced-policy-demo
+
+kubectl create deployment --namespace=advanced-policy-demo nginx --image=nginx
+
+kubectl expose --namespace=advanced-policy-demo deployment nginx --port=80
+
+kubectl run --namespace=advanced-policy-demo access --rm -ti --image busybox /bin/sh
+
+wget -q --timeout=5 nginx -O -
+
+wget -q --timeout=5 google.com -O -
+
+
+2. Deny all ingress traffic
+
+kubectl create -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: advanced-policy-demo
+spec:
+  podSelector:
+    matchLabels: {}
+  policyTypes:
+  - Ingress
+EOF
+
+
+wget -q --timeout=5 nginx -O -
+
+wget -q --timeout=5 google.com -O -
+
+
+3. Allow ingress traffic to Nginx
+
+
+kubectl create -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: access-nginx
+  namespace: advanced-policy-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  ingress:
+    - from:
+      - podSelector:
+          matchLabels: {}
+EOF
+
+
+wget -q --timeout=5 nginx -O -
+
+kubectl create -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: advanced-policy-demo
+spec:
+  podSelector:
+    matchLabels: {}
+  policyTypes:
+  - Egress
+EOF
+
+nslookup nginx
+
+wget -q --timeout=5 google.com -O -
+
+
+
+5. Allow DNS egress traffic
+
+kubectl label namespace kube-system name=kube-system
+
+kubectl create -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-access
+  namespace: advanced-policy-demo
+spec:
+  podSelector:
+    matchLabels: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+EOF
+
+nslookup nginx
+
+nslookup google.com
+
+
+
+6. Allow egress traffic to nginx
+
+kubectl create -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-advance-policy-ns
+  namespace: advanced-policy-demo
+spec:
+  podSelector:
+    matchLabels: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: nginx
+EOF
+
+wget -q --timeout=5 nginx -O -
+
+
+wget -q --timeout=5 google.com -O -
+
+
+
+
+
+kubectl delete ns advanced-policy-demo
+
+
+
+
+Eine Reihe von Container Network Interface (CNI)-Plugins bieten die Möglichkeit, die Netzwerkressourcen einzuschränken, mit denen Pods kommunizieren können. Dies geschieht in der Regel über Netzwerkrichtlinien, die eine Namespace-Ressource zur Festlegung von Regeln bereitstellen. Standard-Netzwerkrichtlinien, die alle Aus- und Eingänge in jedem Namespace blockieren und alle Pods auswählen, können nützlich sein, um einen Ansatz mit Erlaubnislisten zu verfolgen, der sicherstellt, dass kein Workload übersehen wird.
+
+Nicht alle CNI-Plugins bieten Verschlüsselung bei der Übertragung. Wenn das gewählte Plugin diese Funktion nicht bietet, könnte eine alternative Lösung darin bestehen, ein Service-Mesh zu verwenden, das diese Funktion bereitstellt.
+
+Der etcd-Datenspeicher der Steuerungsebene sollte über Kontrollen verfügen, um den Zugriff zu beschränken und nicht öffentlich im Internet zugänglich zu sein. Außerdem sollte für die sichere Kommunikation mit ihm mutual TLS (mTLS) verwendet werden. Die Zertifizierungsstelle hierfür sollte nur für etcd gelten.
+
+Der externe Internetzugriff auf den Kubernetes-API-Server sollte eingeschränkt werden, um die API nicht öffentlich zugänglich zu machen. Seien Sie vorsichtig, da viele verwaltete Kubernetes-Distributionen den API-Server standardmäßig öffentlich zugänglich machen. Sie können dann einen Bastion-Host für den Zugriff auf den Server verwenden.
+
+Der Zugriff auf die Kubelet-API sollte eingeschränkt und nicht öffentlich zugänglich sein. Die Standardeinstellungen für Authentifizierung und Autorisierung sind zu freizügig, wenn keine Konfigurationsdatei mit dem --config-Flag angegeben wurde.
+
+Wenn ein Cloud-Anbieter für das Hosting von Kubernetes verwendet wird, sollte der Zugriff von Pods auf die Cloud-Metadaten-API 169.254.169.254 ebenfalls eingeschränkt oder blockiert werden, wenn er nicht benötigt wird, da er Informationen preisgeben könnte.
